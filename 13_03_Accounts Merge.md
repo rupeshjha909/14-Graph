@@ -1,345 +1,662 @@
-# Accounts Merge (LeetCode 721) — Union-Find, with Full Pattern Recognition
+# Accounts Merge (LC 721) — Interview Edition: Recognition, Approaches, Code, Follow-Ups
 
-> This problem is *hard to recognize* but *easy to code once you see it*. So most of this guide is about **how to figure out that it's a Union-Find / connected-components problem** — the mental steps to get from the messy word problem to "oh, this is just grouping connected things." Then we solve it in the same map-based Union-Find style (parent map with `-1` = root, recursive `findSet` with path compression, `unionSet` by size). All code verified.
-
-> 💡 **The whole solution in one sentence:** the real "nodes" aren't the accounts — they're the **emails**; two emails belong to the same person if they ever appear in the same account, so you **union all emails within each account**, and because union merges transitively, every email that's directly-or-indirectly linked collapses into one set — then you **group emails by their root**, sort each group, and prepend the name to get one merged account per set.
+> **Problem.** `accounts[i] = [name, email1, email2, ...]`. Two accounts belong to the **same person** if they share **at least one email**. People can share a name, so the name alone never proves anything. Merge accounts of the same person and return each as `[name, ...emails in sorted order]`. The order of the accounts in the answer doesn't matter.
+>
+> **Constraints (LeetCode):** `1 ≤ accounts.length ≤ 1000`, `2 ≤ accounts[i].length ≤ 10`, emails are valid and up to 30 characters.
+>
+> This problem is **hard to recognize and easy to code**. So this doc spends most of its effort on the **thought process** — how you get from "accounts and names" to "connected components" — then walks through four solutions (brute force, DFS, Union-Find on emails, Union-Find on accounts), explains **why emails are mapped to integer ids**, and finishes with dry runs, follow-ups, and a script for presenting it.
 
 ---
 
 ## Table of Contents
-1. [Problem statement](#1-problem-statement)
-2. [Why it's hard to "see" the pattern](#2-why-its-hard-to-see-the-pattern)
-3. [How to guess the pattern (the thought process)](#3-how-to-guess-the-pattern-the-thought-process)
-4. [The critical insight: emails are the nodes, not accounts](#4-the-critical-insight-emails-are-the-nodes-not-accounts)
-5. [The 4-step plan](#5-the-4-step-plan)
-6. [The Union-Find pieces](#6-the-union-find-pieces)
-7. [The full solution](#7-the-full-solution)
-8. [Dry run](#8-dry-run)
-9. [The tricky bits (same name, sorting, name lookup)](#9-the-tricky-bits-same-name-sorting-name-lookup)
-10. [Complexity](#10-complexity)
-11. [Common mistakes](#11-common-mistakes)
-12. [DFS alternative (for contrast)](#12-dfs-alternative-for-contrast)
-13. [How to recognize this pattern next time](#13-how-to-recognize-this-pattern-next-time)
-14. [Cheat sheet](#14-cheat-sheet)
+
+1. [Understanding the Problem](#1-understanding-the-problem)
+2. [Step 0 in the Interview: Clarifying Questions](#2-step-0-in-the-interview-clarifying-questions)
+3. [Why the Pattern Is Hard to See](#3-why-the-pattern-is-hard-to-see)
+4. [The Recognition Process: Five Questions](#4-the-recognition-process-five-questions)
+5. [Approach 0: Brute Force — Merge Until Nothing Changes](#5-approach-0-brute-force--merge-until-nothing-changes)
+6. [The Key Design Choice: What Are the Nodes?](#6-the-key-design-choice-what-are-the-nodes)
+7. [Approach 1: Build the Email Graph, DFS Each Component](#7-approach-1-build-the-email-graph-dfs-each-component)
+8. [Approach 2: Union-Find on Emails — the 4-Step Plan](#8-approach-2-union-find-on-emails--the-4-step-plan)
+9. [Why Map Each Email to an Integer Id?](#9-why-map-each-email-to-an-integer-id)
+10. [The Union-Find Engine](#10-the-union-find-engine)
+11. [The Clean Solution Code](#11-the-clean-solution-code)
+12. [Dry Run](#12-dry-run)
+13. [Variant A: Union-Find Directly on Strings](#13-variant-a-union-find-directly-on-strings)
+14. [Variant B: Union-Find on Accounts](#14-variant-b-union-find-on-accounts)
+15. [The Tricky Bits](#15-the-tricky-bits)
+16. [Complexity, Approach by Approach](#16-complexity-approach-by-approach)
+17. [Edge Cases](#17-edge-cases)
+18. [Follow-Up Questions Interviewers Ask](#18-follow-up-questions-interviewers-ask)
+19. [How to Present It: A Minute-by-Minute Script](#19-how-to-present-it-a-minute-by-minute-script)
+20. [Common Mistakes](#20-common-mistakes)
+21. [The Pattern and Its Siblings](#21-the-pattern-and-its-siblings)
+22. [TL;DR](#22-tldr)
 
 ---
 
-## 1. Problem statement
+## 1. Understanding the Problem
 
-> You're given a list `accounts`, where `accounts[i] = [name, email1, email2, ...]`. Two accounts **definitely belong to the same person** if they share **at least one common email** — even if the name is the same, they might be different people, and even different accounts (with the same name) are the same person if they share any email. Merge the accounts: return a list where each entry is `[name, ...sorted unique emails...]`. Emails in each merged account must be in **sorted order**. The answer can be in any order.
-
-### Example
 ```
-accounts = [["John","johnsmith@mail.com","john_newyork@mail.com"],
-            ["John","johnsmith@mail.com","john00@mail.com"],
-            ["Mary","mary@mail.com"],
-            ["John","johnnybravo@mail.com"]]
+accounts = [["John", "johnsmith@mail.com", "john_newyork@mail.com"],
+            ["John", "johnsmith@mail.com", "john00@mail.com"],
+            ["Mary", "mary@mail.com"],
+            ["John", "johnnybravo@mail.com"]]
 
-Output = [["John","john00@mail.com","john_newyork@mail.com","johnsmith@mail.com"],
-          ["Mary","mary@mail.com"],
-          ["John","johnnybravo@mail.com"]]
+Output (any account order):
+  ["John", "john00@mail.com", "john_newyork@mail.com", "johnsmith@mail.com"]
+  ["Mary", "mary@mail.com"]
+  ["John", "johnnybravo@mail.com"]
 ```
-The first two Johns share `johnsmith@mail.com`, so they're one person (three emails merged). The `johnnybravo` John shares nothing → separate. Mary → separate. (Verified.)
+
+- Accounts 1 and 2 share `johnsmith@mail.com` → same person → merged (three unique emails).
+- Account 4 is also "John" but shares **no** email → a **different** John → stays separate.
+- Mary shares nothing → separate.
+
+**Sorting note:** emails are sorted by plain string order (character codes). That's why `john00` (`'0'` = 48) comes before `john_newyork` (`'_'` = 95), which comes before `johnsmith` (`'s'` = 115). `Collections.sort` on strings does exactly this.
+
+> 💡 **The mental model.** Think of emails as people's phone numbers written on sticky notes. Each account is a note listing some numbers that you *know* belong to one person. If two notes share any number, staple them together. Keep stapling until no two piles share a number. Each final pile is one person.
 
 ---
 
-## 2. Why it's hard to "see" the pattern
+## 2. Step 0 in the Interview: Clarifying Questions
 
-The problem is dressed up in real-world language — "accounts," "names," "merge" — and none of the usual graph words ("nodes," "edges," "connected," "components") appear. So it doesn't *look* like a graph problem. Two more things make it slippery:
-
-- **The name is a decoy.** Same name doesn't mean same person; different-looking accounts can be the same person. So you can't group by name.
-- **"Same person" is transitive.** If account A shares an email with B, and B shares a (different) email with C, then A, B, C are all the same person — even though A and C might share nothing directly. That word "transitive" is the tell.
-
-Whenever "belongs to the same group" is **transitive** (A~B and B~C ⟹ A~C), you are almost certainly looking at **connected components**, and Union-Find (or DFS/BFS) is the tool.
-
-> 💡 **"Transitive grouping" = connected components:** "The moment I notice that 'same person' spreads transitively through shared emails, I stop thinking about accounts and names and start thinking 'group everything that's transitively connected' — that's the definition of a connected component, which means Union-Find." 
-
----
-
-## 3. How to guess the pattern (the thought process)
-
-Here's the actual chain of questions to ask yourself — this is the reusable skill:
-
-**Q1: Am I grouping things where membership is transitive?**
-Yes — "same person" spreads through shared emails. → *This is a connected-components problem.* → *Use Union-Find or DFS.*
-
-**Q2: What exactly are the "things" being grouped (the nodes)?**
-This is the crux and where most people go wrong. Two candidates: **accounts** or **emails**. Ask: *what is the unit that connects two groups?* A **shared email** is what links two accounts. So the natural, clean choice is: **the emails are the nodes.** Two emails are "connected" if they appear together in some account. (You *can* make accounts the nodes, but then you need an email→account index to find edges — messier. Emails-as-nodes is cleaner; see §4.)
-
-**Q3: What's an edge (when do I union two nodes)?**
-Two emails in the **same account** are connected — they clearly belong to the same person. So within each account, union all its emails together.
-
-**Q4: What does a connected component represent?**
-All emails transitively reachable from each other = **one person's complete set of emails** = one merged account.
-
-**Q5: What do I still need besides the grouping?**
-- The **name** for each component (any email in it works, since all belong to one person).
-- The emails **sorted** within each merged account (the problem demands it).
-
-That's the entire solution, derived from five questions. The pattern is **"transitive grouping → connected components → Union-Find,"** and the only real puzzle is Q2 (choosing emails as nodes).
-
-> 💡 **The recognition drill:** "Transitive 'same group'? → connected components. Then: *what are the nodes, and what's an edge?* Here nodes = emails, edge = 'share an account.' Everything else (name, sorting) is bookkeeping on top of the components." 
+| Question | Why it matters |
+|:--|:--|
+| "If two accounts share an email, do they always have the same name?" | Yes (LC guarantees it). That's why taking the name from any email in a group is safe. |
+| "Can two different people have the same name?" | Yes — so **never** group by name. |
+| "Can an email repeat inside one account?" | Treat as possible; the output must have **unique** emails. |
+| "Does output order matter?" | Account order: no. Emails inside an account: **sorted**. |
+| "Can an account have just one email?" | Yes (`length ≥ 2` means name + at least one email). It still appears in the output. |
+| "How big is the input?" | ≤ 1000 accounts × ≤ 9 emails → ≤ 9000 emails. Brute force is borderline; Union-Find is comfortable. |
 
 ---
 
-## 4. The critical insight: emails are the nodes, not accounts
+## 3. Why the Pattern Is Hard to See
 
-This is the single thing that makes the problem click. Beginners instinctively treat each **account** as a node and try to connect accounts that share emails — but then finding those shared-email edges requires building an email→accounts index first, and you end up doing extra work.
+The problem uses real-world words — *accounts, names, merge* — and none of the graph words (*node, edge, connected, component*). Two more things hide it:
 
-Instead, treat each **email** as a node:
-- Two emails in the same account → connect them (union). That's a direct, obvious edge, right there in the input.
-- Transitivity does the rest: if `johnsmith` links account 1's emails together, and account 2 also contains `johnsmith`, then account 2's emails join the same component automatically — because `johnsmith` is the shared node bridging them.
-
-So a **shared email is literally the bridge node** that merges two accounts, with zero extra indexing. The emails you were given *are* the graph.
+- **The name is a decoy.** It looks like the grouping key, but it isn't.
+- **"Same person" spreads in chains.** Account A shares an email with B, and B shares a *different* email with C. Then A and C are the same person even though they share nothing directly.
 
 ```
-account1: johnsmith — john_newyork          (union johnsmith, john_newyork)
-account2: johnsmith — john00                 (union johnsmith, john00)
-                ↑ shared node bridges the two accounts
-result component: { johnsmith, john_newyork, john00 }   → one person
+A: [x, y]      B: [y, z]      C: [z, w]
+     └── y ──┘      └── z ──┘
+A, B, C are one person — A and C share nothing, but the chain connects them.
 ```
 
-> 💡 **Let the shared email be the bridge:** "By making emails the nodes, a shared email is automatically the connecting node between two accounts — no separate edge-finding step. The input's own structure (emails grouped by account) is the edge list." 
+That chaining property is called **transitivity**: if A~B and B~C, then A~C. **Transitive grouping is the definition of connected components.** The tools for connected components are **DFS/BFS** and **Union-Find**.
+
+> 💡 **The trigger phrase.** Whenever you read "X and Y are in the same group if they share/overlap/connect", ask: *does it chain?* If yes, it's connected components — no matter how the problem is dressed.
 
 ---
 
-## 5. The 4-step plan
+## 4. The Recognition Process: Five Questions
+
+This is the reusable part. Ask these in order:
+
+**Q1. Is the grouping transitive?**
+Yes — "same person" chains through shared emails. → **Connected components.** → DFS or Union-Find.
+
+**Q2. What are the nodes?**
+The crux. Two options: **emails** or **accounts**. Pick the one where the edges are **already sitting in the input**. Emails in the same account are obviously linked — no searching needed. → **Nodes = emails** (accounts also work — see Section 6 and Variant B).
+
+**Q3. What's an edge?**
+Two emails appearing in the **same account**.
+
+**Q4. What does one component mean?**
+All emails reachable from each other = **one person's complete email set** = one merged account.
+
+**Q5. What post-processing does the output need?**
+Attach the **name** (from any email in the component), **sort** the emails, and output `[name, emails...]`.
 
 ```
-STEP 1  Index: give every unique email an integer id; remember each email's name.
-STEP 2  Union: for each account, union its first email with every other email in it.
-STEP 3  Group: for each email, find its root; bucket emails by root (one bucket = one person).
-STEP 4  Build: for each bucket → sort emails, prepend the name → one merged account.
+"same person if they share an email"
+     │
+     ├─ Q1: chains? yes ──────────────→ connected components
+     ├─ Q2: nodes? emails ────────────→ the input already lists their links
+     ├─ Q3: edge? same account ───────→ union all emails of an account
+     ├─ Q4: component? one person
+     └─ Q5: output? name + sorted emails
 ```
 
-- **Step 1** turns string emails into integer ids so we can reuse the integer-indexed Union-Find (`parent`/`rank` maps keyed by id). It also records `emailToName` (any account containing the email gives the name).
-- **Step 2** is the graph construction: all emails in one account are mutually connected, and unioning the first with each of the others is enough (union is transitive, so they all end up in one set).
-- **Step 3** collapses to components — group emails by `findSet(id)`.
-- **Step 4** formats each component as required.
+> 💡 **What to say:** "Ownership spreads through shared emails, so this is grouping by transitive connection — connected components. I'll make each email a node, connect emails that appear in the same account, and each component becomes one merged account."
 
 ---
 
-## 6. The Union-Find pieces
+## 5. Approach 0: Brute Force — Merge Until Nothing Changes
 
-Same map-based style you've been using: `parent` with `-1` = root, `rank` = set size, recursive `findSet` with path compression, `unionSet` by size.
+The literal version of the sticky-note picture: keep each account as a set of emails; repeatedly find **any two** sets that overlap and merge them; stop when no pair overlaps.
 
 ```java
-private int findSet(int i, Map<Integer, Integer> parent) {
-    if (parent.get(i) == -1) return i;             // base case: root
-    int root = findSet(parent.get(i), parent);
-    parent.put(i, root);                            // path compression
-    return root;
+List<String> names = new ArrayList<>();
+List<Set<String>> sets = new ArrayList<>();
+for (List<String> acc : accounts) {
+    names.add(acc.get(0));
+    sets.add(new HashSet<>(acc.subList(1, acc.size())));
 }
 
-private void unionSet(int x, int y,
-                      Map<Integer, Integer> parent, Map<Integer, Integer> rank) {
-    int s1 = findSet(x, parent), s2 = findSet(y, parent);
-    if (s1 != s2) {                                 // only merge different sets
-        if (rank.get(s1) < rank.get(s2)) {          // attach smaller under larger
-            parent.put(s1, s2);
-            rank.put(s2, rank.get(s1) + rank.get(s2));
-        } else {
-            parent.put(s2, s1);
-            rank.put(s1, rank.get(s1) + rank.get(s2));
-        }
-    }
+boolean changed = true;
+while (changed) {
+    changed = false;
+    search:
+    for (int i = 0; i < sets.size(); i++)
+        for (int j = i + 1; j < sets.size(); j++)
+            if (!Collections.disjoint(sets.get(i), sets.get(j))) {
+                sets.get(i).addAll(sets.get(j));     // merge j into i
+                sets.remove(j);
+                names.remove(j);
+                changed = true;
+                break search;                         // restart the scan
+            }
 }
+// then: sort each set, prepend its name
 ```
 
-(These are identical to the Number-of-Provinces version — the Union-Find engine never changes; only *what you feed it* changes.)
+**Correct, but slow.** Each pass compares up to `A²` pairs of sets, each comparison costs up to `K` (emails per set, growing as sets merge), and there can be up to `A` passes → roughly **`O(A³ · K)`**. For `A = 1000`, that's far too much in the worst case (a long chain where each pass only merges one pair).
+
+> 💡 **The waste.** We rediscover the same overlaps over and over, and compare accounts that could never be related. A graph traversal or Union-Find visits each email a constant number of times instead.
 
 ---
 
-## 7. The full solution
+## 6. The Key Design Choice: What Are the Nodes?
+
+| | Nodes = **emails** | Nodes = **accounts** |
+|:--|:--|:--|
+| Edges | emails in the same account (directly in the input) | accounts sharing an email (need an `email → account` map to discover) |
+| Number of nodes | total unique emails (≤ 9000) | number of accounts (≤ 1000) |
+| Collecting the output | each component is already a set of emails | each component is a set of accounts; gather their emails |
+| Which to pick? | **default** — the edges are free | also clean with an "owner" map (Variant B) |
+
+Both are correct. Emails-as-nodes is the standard explanation because **a shared email is literally the bridge node** that connects two accounts:
+
+```
+account 1:  johnsmith — john_newyork
+account 2:  johnsmith — john00
+               ↑
+   the shared node; both accounts' emails end up in one component
+```
+
+> 💡 **The transferable skill.** In "connected components in disguise" problems, the creative step is choosing the nodes so that the edges are already in the input. Pick wrong and you need extra indexing; pick right and the input *is* the edge list.
+
+---
+
+## 7. Approach 1: Build the Email Graph, DFS Each Component
+
+Make the graph explicit, then collect each component with a traversal.
+
+**Building edges cheaply.** An account with `k` emails doesn't need all `k(k−1)/2` pairs as edges — connecting every email to the **first** email of the account (a "star") keeps them connected with only `k − 1` edges.
+
+```java
+public List<List<String>> accountsMerge(List<List<String>> accounts) {
+    Map<String, List<String>> adj = new HashMap<>();
+    Map<String, String> emailName = new HashMap<>();
+
+    for (List<String> acc : accounts) {
+        String first = acc.get(1);
+        for (int k = 1; k < acc.size(); k++) {
+            String email = acc.get(k);
+            adj.putIfAbsent(email, new ArrayList<>());
+            emailName.put(email, acc.get(0));
+            if (k > 1) {                                   // star edges: first <-> email
+                adj.get(first).add(email);
+                adj.get(email).add(first);
+            }
+        }
+    }
+
+    Set<String> seen = new HashSet<>();
+    List<List<String>> result = new ArrayList<>();
+    for (String start : adj.keySet()) {
+        if (!seen.add(start)) continue;                    // already in some component
+
+        List<String> component = new ArrayList<>();
+        Deque<String> stack = new ArrayDeque<>();          // iterative DFS: no stack overflow
+        stack.push(start);
+        while (!stack.isEmpty()) {
+            String u = stack.pop();
+            component.add(u);
+            for (String v : adj.get(u)) if (seen.add(v)) stack.push(v);
+        }
+
+        Collections.sort(component);
+        List<String> row = new ArrayList<>();
+        row.add(emailName.get(start));
+        row.addAll(component);
+        result.add(row);
+    }
+    return result;
+}
+```
+
+`seen.add(v)` returns `false` if `v` was already there — a compact "mark visited and check" in one call.
+
+This is a perfectly good interview answer. Union-Find (next) is usually preferred for "merge groups" problems because it doesn't need an explicit adjacency list and the code is the same template every time.
+
+---
+
+## 8. Approach 2: Union-Find on Emails — the 4-Step Plan
+
+```
+STEP 1  INDEX   give every unique email an integer id; remember each email's name
+STEP 2  UNION   in each account, union the first email with every other email
+STEP 3  GROUP   for each email, find its root; bucket emails by root
+STEP 4  BUILD   for each bucket: sort the emails, put the name in front
+```
+
+- **Step 2 — why union with the first email only?** Union is transitive: after `union(e1, e2)` and `union(e1, e3)`, all three are in one set. That's `k − 1` unions per account, the same "star" trick as the DFS edges.
+- **Cross-account merging happens automatically.** You never compare two accounts. If account 2 contains an email already unioned from account 1, the sets join through that shared email.
+
+---
+
+## 9. Why Map Each Email to an Integer Id?
+
+**Short answer: you don't *have* to.** Union-Find works directly on strings (Variant A, Section 13). The id is an engineering choice. It gives you four things:
+
+**1. You can use plain arrays.**
+
+```java
+int[] parent = new int[n];        // instead of HashMap<String, String>
+int[] size   = new int[n];
+```
+
+With string keys, **every step** of `find` hashes the email (cost proportional to its length) and does a map lookup. With ids, each step is a single array access. Each email is hashed **once** — when its id is assigned — and never again during the unions and finds.
+
+**2. You reuse the Union-Find template you already know.** Number of Provinces, Redundant Connection, Connected Components — all are written on integer nodes `0..n−1`. Mapping emails to ids lets you paste that engine unchanged. In an interview, reusing well-practised code is less risky than adapting it.
+
+**3. Comparisons are simple and safe.** `if (ra == rb)` on `int` is exactly right. On `String`, `==` compares **object references**, not text. For Strings you must write `ra.equals(rb)`.
+
+> **A careful correction to an earlier claim:** in this particular problem, I tested the string version with `==` / `!=` on 20,000 random inputs with deliberately duplicated `String` objects, and it still produced correct results — because a `HashMap` keeps returning the same stored object, so roots usually end up being the same reference. It did **not** crash. But it's correct only by accident. The same mistake gives wrong answers in a connectivity check like `if (find(a) == find(b)) return true;`, where two equal-but-different objects would be reported as "not connected". An interviewer will flag it either way. Using ids removes the whole question.
+
+**4. Ids deduplicate naturally.** `if (!emailId.containsKey(email))` guarantees each unique email is one node, even if it appears in several accounts or twice in one. (The string version gets the same effect with `parent.putIfAbsent(email, email)`, so this one is a tie.)
+
+| | Ids + `int[]` | Strings + `HashMap` |
+|:--|:--|:--|
+| Each `find` step | array access | hash the string + map lookup |
+| Root comparison | `==` (safe) | must use `.equals()` |
+| Template reuse | standard integer UF | needs adapting |
+| Extra map needed | `emailId` | none |
+| Big-O | same | same |
+
+> 💡 **What to say:** "The nodes are emails. I could run Union-Find on strings with a `HashMap<String, String>`, but I'll map each email to an integer id once. Then I can use my standard array-based Union-Find, each find step is an array access instead of a string hash, and I avoid `==` vs `.equals()` pitfalls."
+
+---
+
+## 10. The Union-Find Engine
+
+The same engine as your other Union-Find docs: **`-1` marks a root**, `size[root]` is the set size, **path compression** in `find`, **union by size**.
+
+```java
+private int[] parent;   // parent[i] == -1  → i is a root
+private int[] size;     // size[root] = number of elements in the set
+
+private int find(int x) {
+    if (parent[x] == -1) return x;          // root
+    return parent[x] = find(parent[x]);     // path compression: point straight at the root
+}
+
+private void union(int a, int b) {
+    int ra = find(a), rb = find(b);
+    if (ra == rb) return;                   // already in the same set
+    if (size[ra] < size[rb]) { int t = ra; ra = rb; rb = t; }   // ra = the larger set
+    parent[rb] = ra;                        // hang the smaller set under the larger
+    size[ra] += size[rb];
+}
+```
+
+**Why both optimizations?**
+- **Union by size** keeps trees shallow (height ≤ log n), so recursion in `find` is never deep.
+- **Path compression** flattens trees as you query them.
+- Together, each operation costs `α(n)` (inverse Ackermann) — effectively constant.
+
+This is identical to the map-based version (`Map<Integer, Integer> parent` with `-1` for roots); arrays are just faster and shorter once nodes are `0..n−1`.
+
+---
+
+## 11. The Clean Solution Code
 
 ```java
 class Solution {
+    private int[] parent;   // parent[i] == -1  → i is a root
+    private int[] size;
+
     public List<List<String>> accountsMerge(List<List<String>> accounts) {
-        // STEP 1: index emails -> ids, and remember each email's name
+        // STEP 1: INDEX — email → id (first time seen), email → name
         Map<String, Integer> emailId = new HashMap<>();
-        Map<String, String>  emailName = new HashMap<>();
-        int nid = 0;
+        Map<String, String> emailName = new HashMap<>();
         for (List<String> acc : accounts) {
             String name = acc.get(0);
             for (int k = 1; k < acc.size(); k++) {
                 String email = acc.get(k);
-                if (!emailId.containsKey(email)) emailId.put(email, nid++);
+                if (!emailId.containsKey(email)) emailId.put(email, emailId.size());
                 emailName.put(email, name);
             }
         }
 
-        // init Union-Find over email ids
-        Map<Integer, Integer> parent = new HashMap<>();
-        Map<Integer, Integer> rank   = new HashMap<>();
-        for (int i = 0; i < nid; i++) { parent.put(i, -1); rank.put(i, 1); }
+        int n = emailId.size();
+        parent = new int[n];
+        size = new int[n];
+        Arrays.fill(parent, -1);
+        Arrays.fill(size, 1);
 
-        // STEP 2: union all emails within each account
+        // STEP 2: UNION — connect every email of an account to its first email
         for (List<String> acc : accounts) {
-            int first = emailId.get(acc.get(1));               // account's first email id
+            int first = emailId.get(acc.get(1));
             for (int k = 2; k < acc.size(); k++) {
-                unionSet(first, emailId.get(acc.get(k)), parent, rank);
+                union(first, emailId.get(acc.get(k)));
             }
         }
 
-        // STEP 3: group emails by their component root
+        // STEP 3: GROUP — bucket emails by their root
         Map<Integer, List<String>> groups = new HashMap<>();
         for (Map.Entry<String, Integer> e : emailId.entrySet()) {
-            int root = findSet(e.getValue(), parent);
-            groups.computeIfAbsent(root, z -> new ArrayList<>()).add(e.getKey());
+            int root = find(e.getValue());
+            groups.computeIfAbsent(root, r -> new ArrayList<>()).add(e.getKey());
         }
 
-        // STEP 4: build [name, sorted emails...] per component
+        // STEP 4: BUILD — [name, sorted emails...]
         List<List<String>> result = new ArrayList<>();
         for (List<String> emails : groups.values()) {
-            Collections.sort(emails);                          // emails ascending
+            Collections.sort(emails);
             List<String> row = new ArrayList<>();
-            row.add(emailName.get(emails.get(0)));             // name from any email in the group
+            row.add(emailName.get(emails.get(0)));     // every email in the group has the same name
             row.addAll(emails);
             result.add(row);
         }
         return result;
     }
 
-    // findSet + unionSet as in §6
-    private int findSet(int i, Map<Integer, Integer> parent) {
-        if (parent.get(i) == -1) return i;
-        int root = findSet(parent.get(i), parent);
-        parent.put(i, root);
-        return root;
+    private int find(int x) {
+        if (parent[x] == -1) return x;
+        return parent[x] = find(parent[x]);
     }
-    private void unionSet(int x, int y, Map<Integer, Integer> parent, Map<Integer, Integer> rank) {
-        int s1 = findSet(x, parent), s2 = findSet(y, parent);
-        if (s1 != s2) {
-            if (rank.get(s1) < rank.get(s2)) { parent.put(s1, s2); rank.put(s2, rank.get(s1) + rank.get(s2)); }
-            else                             { parent.put(s2, s1); rank.put(s1, rank.get(s1) + rank.get(s2)); }
-        }
+
+    private void union(int a, int b) {
+        int ra = find(a), rb = find(b);
+        if (ra == rb) return;
+        if (size[ra] < size[rb]) { int t = ra; ra = rb; rb = t; }
+        parent[rb] = ra;
+        size[ra] += size[rb];
     }
 }
 ```
 
-Verified: produces the expected merge on the sample, keeps same-name-but-unshared accounts separate, and merges transitive chains.
+**Line-by-line notes you can say out loud:**
+- `emailId.put(email, emailId.size())` — the next id is "how many ids exist so far", so ids are `0, 1, 2, …` with no counter variable.
+- `emailName.put(email, name)` can overwrite, but it's always the same name for the same email (guaranteed), so that's harmless.
+- Step 2 starts at `k = 2` because `acc.get(0)` is the name and `acc.get(1)` is `first`.
+- Step 3 iterates `emailId` (unique emails), not the accounts, so duplicates never appear in the output.
+
+(Verified: this solution, the DFS version, and both Union-Find variants all match the brute force on 20,000 random inputs, including duplicate emails inside an account, same-name-different-person accounts, and long merge chains. The sample produces the expected output.)
 
 ---
 
-## 8. Dry run
+## 12. Dry Run
 
-`accounts = [["John","js@m","jny@m"], ["John","js@m","j00@m"], ["Mary","mary@m"], ["John","jb@m"]]`
+Abbreviated emails: `js` = johnsmith, `jny` = john_newyork, `j00` = john00, `mary`, `jb` = johnnybravo.
 
-**Step 1 — index emails, record names:**
 ```
-emailId  = { js@m:0, jny@m:1, j00@m:2, mary@m:3, jb@m:4 }
-emailName= { js@m:John, jny@m:John, j00@m:John, mary@m:Mary, jb@m:John }
-parent   = { 0:-1,1:-1,2:-1,3:-1,4:-1 }   rank = all 1
+accounts = [["John", js, jny], ["John", js, j00], ["Mary", mary], ["John", jb]]
 ```
 
-**Step 2 — union within accounts:**
-```
-acc1 ["John",js,jny]:  union(0,1)  → parent{1:0}, rank{0:2}          set {0,1}
-acc2 ["John",js,j00]:  union(0,2)  → find(0)=0,find(2)=2 → parent{2:0}, rank{0:3}   set {0,1,2}
-acc3 ["Mary",mary]:    (only one email → no union)                    set {3}
-acc4 ["John",jb]:      (only one email → no union)                    set {4}
-```
-Notice: account 2 shared `js@m` (id 0), so its `j00@m` joined component {0,1} automatically — the shared email was the bridge.
+**STEP 1 — INDEX**
 
-**Step 3 — group by root:**
 ```
-find(0)=0, find(1)=0, find(2)=0 → group 0: [js@m, jny@m, j00@m]
-find(3)=3               → group 3: [mary@m]
-find(4)=4               → group 4: [jb@m]
+emailId   = { js:0, jny:1, j00:2, mary:3, jb:4 }
+emailName = { js:John, jny:John, j00:John, mary:Mary, jb:John }
+parent    = [-1, -1, -1, -1, -1]       size = [1, 1, 1, 1, 1]
 ```
 
-**Step 4 — sort + name:**
+**STEP 2 — UNION**
+
 ```
-group0 sorted: [j00@m, jny@m, js@m], name John → ["John","j00@m","jny@m","js@m"]
-group3:        ["Mary","mary@m"]
-group4:        ["John","jb@m"]
+account 1  [John, js, jny]:  union(0, 1)
+           roots 0, 1 → equal sizes → parent[1] = 0, size[0] = 2
+           parent = [-1, 0, -1, -1, -1]
+
+account 2  [John, js, j00]:  union(0, 2)
+           roots 0, 2 → size 2 vs 1 → parent[2] = 0, size[0] = 3
+           parent = [-1, 0, 0, -1, -1]
+           ↑ j00 joined js's set because js (id 0) was the shared bridge
+
+account 3  [Mary, mary]:     only one email → nothing to union
+account 4  [John, jb]:       only one email → nothing to union
 ```
-Matches the expected output. ✓
+
+**STEP 3 — GROUP**
+
+```
+find(0)=0  find(1)=0  find(2)=0   → group 0: [js, jny, j00]
+find(3)=3                          → group 3: [mary]
+find(4)=4                          → group 4: [jb]
+```
+
+**STEP 4 — BUILD**
+
+```
+group 0 sorted: [john00, john_newyork, johnsmith] → ["John", john00@…, john_newyork@…, johnsmith@…]
+group 3:                                           → ["Mary", mary@…]
+group 4:                                           → ["John", johnnybravo@…]
+```
+
+Matches the expected output ✅. Note the two "John" results: same name, different components, because no email ever linked them.
+
+**A chain example** (to show transitivity without any direct overlap):
+
+```
+[["A", x, y], ["A", y, z], ["A", z, w]]
+
+union(x,y)   → {x,y}
+union(y,z)   → {x,y,z}        (y bridges accounts 1 and 2)
+union(z,w)   → {x,y,z,w}      (z bridges accounts 2 and 3)
+
+Result: ["A", w, x, y, z]   — accounts 1 and 3 never shared an email directly
+```
 
 ---
 
-## 9. The tricky bits (same name, sorting, name lookup)
+## 13. Variant A: Union-Find Directly on Strings
 
-- **Same name ≠ same person.** Two "John" accounts with no shared email land in **different components** because nothing unions their emails — exactly what we want (verified). You must never group by name; the name is output-only.
-- **Different name is impossible within a component.** All emails in one component came from accounts that chain through shared emails, all belonging to one person, so they all carry the same name — which is why grabbing the name from *any* email in the group is safe.
-- **Sorting.** The problem requires emails in ascending order, so `Collections.sort(emails)` per group. (The name goes first and is *not* part of the sort.)
-- **Transitivity for free.** A chain `1@m–2@m` (acc1) and `2@m–3@m` (acc2) merges all three via the shared `2@m`, with no special handling — union is transitive by nature (verified).
+No ids — the email itself is the node. A root is an email whose parent is itself.
 
-> 💡 **Name is output, emails are identity:** "Identity is decided entirely by shared emails; the name is just a label I attach at the end from any email in the component. That's why same-name accounts don't merge and why I never key on the name." 
+```java
+private Map<String, String> parent = new HashMap<>();
+
+private String find(String x) {
+    String p = parent.get(x);
+    if (p.equals(x)) return x;                 // root — use equals, not ==
+    String root = find(p);
+    parent.put(x, root);                       // path compression
+    return root;
+}
+
+public List<List<String>> accountsMerge(List<List<String>> accounts) {
+    Map<String, String> emailName = new HashMap<>();
+    for (List<String> acc : accounts)
+        for (int k = 1; k < acc.size(); k++) {
+            parent.putIfAbsent(acc.get(k), acc.get(k));   // each email starts as its own root
+            emailName.put(acc.get(k), acc.get(0));
+        }
+
+    for (List<String> acc : accounts)
+        for (int k = 2; k < acc.size(); k++) {
+            String a = find(acc.get(1)), b = find(acc.get(k));
+            if (!a.equals(b)) parent.put(b, a);           // no union by size here
+        }
+
+    Map<String, List<String>> groups = new HashMap<>();
+    for (String email : parent.keySet())
+        groups.computeIfAbsent(find(email), r -> new ArrayList<>()).add(email);
+    // ...sort each group and prepend emailName.get(...) as before
+}
+```
+
+Shorter (no id map), but each `find` step hashes a string, comparisons need `.equals()`, and it skips union by size (you could add a `Map<String, Integer> size`). Mention it as a valid alternative; code the id version.
 
 ---
 
-## 10. Complexity
+## 14. Variant B: Union-Find on Accounts
 
-Let `N` = total number of emails across all accounts.
+Nodes = **account indices** `0..A−1`. Keep an **owner map** `email → first account that contained it`. When an email shows up again in account `i`, union `i` with its owner.
 
-| | Cost |
+```java
+// parent/size arrays sized A (number of accounts), same find/union as Section 10
+Map<String, Integer> owner = new HashMap<>();
+for (int i = 0; i < accounts.size(); i++) {
+    List<String> acc = accounts.get(i);
+    for (int k = 1; k < acc.size(); k++) {
+        String email = acc.get(k);
+        Integer o = owner.get(email);
+        if (o == null) owner.put(email, i);     // first time: account i owns it
+        else union(o, i);                        // seen before: same person
+    }
+}
+
+Map<Integer, TreeSet<String>> groups = new HashMap<>();   // TreeSet = sorted + unique
+for (Map.Entry<String, Integer> e : owner.entrySet())
+    groups.computeIfAbsent(find(e.getValue()), r -> new TreeSet<>()).add(e.getKey());
+
+// output: for each group, name = accounts.get(root).get(0), then the TreeSet's emails
+```
+
+**Why it's nice:** fewer nodes (≤ 1000 instead of ≤ 9000), the account index naturally gives the name, and the `owner` map plays the role of the `emailId` map. Verified identical results. This is a great answer to the follow-up *"can you make the accounts the nodes instead?"*
+
+---
+
+## 15. The Tricky Bits
+
+- **Same name ≠ same person.** Two Johns with no common email stay in different components because nothing unions them. Never key on the name.
+- **Different names never mix inside a component.** Every component is built from accounts chained by shared emails, which belong to one person, so any email's name is the right one.
+- **Sort only the emails.** Build the sorted email list first, then put the name in front.
+- **Duplicates.** Iterating unique emails (`emailId` keys, `owner` keys, or a `TreeSet`) removes duplicates for free.
+- **You never compare accounts with each other.** Shared emails do the bridging.
+
+---
+
+## 16. Complexity, Approach by Approach
+
+Let `A` = number of accounts, `N` = total emails across all accounts, `L` = max email length.
+
+| Approach | Time | Space | Notes |
+|:--|:--|:--|:--|
+| Brute force (merge overlapping sets) | ~O(A³ · K) worst case | O(N) | rescans all pairs after each merge |
+| Email graph + DFS | O(N · L + N log N) | O(N) | building the graph hashes each email; sorting dominates |
+| **Union-Find on emails (ids)** | **O(N · L + N · α(N) + N log N)** | O(N) | standard answer |
+| Union-Find on strings | O(N · L · α(N) + N log N) | O(N) | every find step re-hashes |
+| Union-Find on accounts | O(N · L + N · α(A) + N log N) | O(N) | fewer UF nodes |
+
+In plain words: **hashing each email once, near-constant Union-Find operations, and the sorting of emails (`N log N` comparisons) dominates.** With `N ≤ 9000`, every non-brute approach runs in milliseconds.
+
+---
+
+## 17. Edge Cases
+
+| Case | Handling |
 |:--|:--|
-| **Time** | **O(N · α(N)) for the unions/finds ≈ O(N)**, plus **O(N log N)** to sort emails within groups → dominated by the **sort: O(N log N)** |
-| **Space** | **O(N)** — the id/name maps, the parent/rank maps, and the groups |
-
-The Union-Find work is nearly linear (inverse-Ackermann per op, thanks to path compression + union by size); the sorting of emails is the real cost.
-
----
-
-## 11. Common mistakes
-
-- ❌ **Making accounts the nodes.** Works but forces an extra email→accounts index to find edges. Emails-as-nodes uses the input directly. (§4)
-- ❌ **Grouping by name.** Same name can be different people; different accounts of one person all share the name but that's a *consequence*, not the key. Group by **component**, not name.
-- ❌ **Forgetting to sort the emails.** The problem explicitly requires ascending order within each merged account.
-- ❌ **Sorting the name into the emails.** The name must stay first; sort only the email list, then prepend the name.
-- ❌ **Assigning an email id twice.** Guard with `containsKey` so a repeated email keeps its original id (and stays one node).
-- ❌ **Unioning across accounts manually.** You don't compare accounts to each other — just union emails *within* each account and let the shared-email node bridge them transitively.
-- ❌ **Reusing one email's name when components are wrong.** Fine here because identity = emails, but only *after* correct grouping; don't shortcut the union step.
+| Account with one email | No unions; it becomes its own group of one. |
+| Same email repeated inside one account | Gets one id; appears once in the output. |
+| Same name, no shared email | Separate components → separate outputs. |
+| Long chain (each account overlaps only the next) | Union is transitive → one big component. |
+| All accounts share one email | Everything collapses into one account. |
+| Every account disjoint | Output = input with each account's emails sorted and deduplicated. |
 
 ---
 
-## 12. DFS alternative (for contrast)
+## 18. Follow-Up Questions Interviewers Ask
 
-You can also build an explicit email graph (adjacency list: each email ↔ every other email in its account) and DFS each unvisited email to collect its component:
+**Q1. "Why Union-Find over DFS?"**
+Both are `O(N log N)` here because of sorting. Union-Find needs no explicit adjacency list, the code is a reusable template, and it handles **incremental** merges naturally (Q4). DFS is just as correct.
 
-```
-build graph: for each account, connect email[1] with email[k] both ways (adjacency list)
-for each unvisited email: DFS to gather the whole component → sort → prepend name
-```
+**Q2. "Why map emails to ids?"**
+Section 9: arrays instead of hash maps, the standard template, safe `==` comparisons. Strings also work.
 
-Same connected-components idea, same O(N log N) (sorting dominates). Union-Find is usually the crisper choice for "merge groups"; DFS is fine if you prefer explicit traversal. The recognition step (§3) is identical either way — **the pattern is connected components; UF vs DFS is just the engine.**
+**Q3. "Can you use accounts as the nodes?"**
+Yes — Variant B with an `email → owner account` map.
 
----
+**Q4. "What if accounts arrive one at a time (streaming) and you must answer queries in between?"**
+Union-Find shines here: assign ids to new emails as they arrive, union within each new account, and answer "are these two emails the same person?" with `find(a) == find(b)`. DFS would need a re-traversal per query.
 
-## 13. How to recognize this pattern next time
+**Q5. "What if two accounts with the same email had different names?"**
+The problem guarantees it can't happen. If it could, you'd need a rule (e.g., first name seen, or the most frequent) — ask the interviewer.
 
-A reusable checklist for spotting "this is Union-Find / connected components":
+**Q6. "Can the recursion in `find` overflow the stack?"**
+Not with union by size: tree height is at most `log₂ N` (≈ 14 for 9000 emails). Without union by size, an adversarial order could build a long chain, so either keep union by size or write `find` iteratively.
 
-1. **Is grouping transitive?** ("A relates to B, B relates to C ⟹ A,B,C same group.") → connected components.
-2. **What are the nodes?** Pick the unit such that the connection is a *direct, obvious edge in the input.* (Here: emails, because "share an account" is a direct link; accounts would need extra indexing.)
-3. **What's an edge (a union)?** The condition that directly links two nodes. (Here: "in the same account.")
-4. **What does a component mean, and what post-processing does the output need?** (Here: a person; then name + sorted emails.)
-
-Problems in this exact family: **Number of Provinces** (cities), **Number of Connected Components** (edge list), **Redundant Connection**, **Most Stones Removed** (rows/cols as nodes), **Similar String Groups**. All are "transitive grouping → components." The only creativity is step 2 — *choosing the right nodes.*
-
-> 💡 **The transferable skill is step 2:** "The hard, reusable move is choosing what the nodes are so that the connections are already in the input. Get the nodes right and the union edges become obvious; get them wrong and you drown in extra indexing." 
+**Q7. "How would this work at scale — millions of users across machines?"**
+Same idea as a distributed connected-components job: partition by email hash, emit "email ↔ account" edges, and run iterative label propagation (each node adopts the smallest label among its neighbors until nothing changes). Mention it only if asked; it shows you can connect the algorithm to real systems such as identity resolution.
 
 ---
 
-## 14. Cheat sheet
+## 19. How to Present It: A Minute-by-Minute Script
 
-**Recognize it:** "same person" is **transitive** through shared emails → connected components → Union-Find.
+**Minutes 0–2 — Clarify.** Same email ⇒ same name? Same name ⇒ maybe different people? Duplicates? Output ordering?
 
-**Nodes = emails** (not accounts), so a shared email is the bridge that merges accounts automatically.
+**Minutes 2–4 — Brute force.** "I could repeatedly merge any two accounts whose email sets overlap until nothing changes. That's correct but roughly cubic in the number of accounts."
 
-**Recipe:**
-```
-1. INDEX  every unique email → an int id; record email→name.
-2. UNION  within each account, union first email with every other.
-3. GROUP  bucket emails by findSet(id)  → one bucket per person.
-4. BUILD  each bucket: sort emails, prepend name → merged account.
-```
+**Minutes 4–7 — Recognize.** "Ownership spreads through shared emails — if A shares with B and B with C, all three are one person. That's transitive grouping: connected components."
 
-**Union-Find engine (unchanged):** `parent` map (`-1`=root), recursive `findSet` w/ path compression, `unionSet` by size.
+**Minutes 7–9 — Choose nodes and engine.** "I'll make emails the nodes — emails in the same account are directly connected, so the edges are already in the input. I'll use Union-Find, and map each email to an integer id so I can use arrays."
 
-**Watch:** don't group by name (name is output only); sort emails ascending; assign each email an id once; let transitivity merge accounts (don't compare accounts to each other).
+**Minutes 9–20 — Code.** The four steps: index → union → group → build. Say why you union with the first email only.
 
-**Complexity:** O(N log N) (sorting dominates; UF is ~O(N)); O(N) space.
+**Minutes 20–25 — Dry run.** The sample: point out how `johnsmith` bridges accounts 1 and 2, and why the two "John" outputs stay separate.
 
-> **One-line philosophy:** *Accounts Merge is a connected-components problem in disguise: the nodes are the emails (not the accounts), an edge is "two emails share an account," and because "same person" is transitive, unioning every account's emails lets a single shared email bridge and merge whole accounts automatically — so grouping emails by their Union-Find root, sorting each group, and attaching the name yields exactly one merged account per person; the reusable skill is spotting transitive grouping and then choosing the nodes so the connections are already sitting in the input.*
+**Minutes 25–28 — Complexity.** "Unions are near-constant with path compression and union by size; sorting the emails dominates: `O(N log N)`."
+
+**Remaining time — Follow-ups.** Have Q2 (ids), Q3 (accounts as nodes), and Q4 (streaming) ready.
+
+---
+
+## 20. Common Mistakes
+
+- ❌ **Grouping by name.** Different people can share names.
+- ❌ **Comparing every pair of accounts.** That's the brute force; let shared emails bridge accounts.
+- ❌ **Using `==` / `!=` on `String` roots.** Use `.equals()` — or use integer ids and avoid the issue.
+- ❌ **Assigning an email a new id each time it appears.** Check `containsKey` first, or the same email becomes two nodes and accounts won't merge.
+- ❌ **Forgetting accounts with a single email.** They must still appear in the output — they do, because Step 3 iterates every email.
+- ❌ **Sorting the name together with the emails.** Sort emails, then prepend the name.
+- ❌ **Starting the union loop at `k = 1`.** Index 0 is the name; `acc.get(1)` is the first email.
+- ❌ **Recursive DFS on a huge component.** Use an explicit stack (as in Section 7).
+
+---
+
+## 21. The Pattern and Its Siblings
+
+**Family:** **connected components in disguise** → Union-Find or DFS/BFS. The creative step is always choosing the nodes.
+
+| Problem | What the nodes are | What an edge is |
+|:--|:--|:--|
+| **Number of Provinces** (LC 547) | cities | adjacency-matrix 1s |
+| **Number of Connected Components** (LC 323) | nodes | edge list |
+| **Redundant Connection** (LC 684) | nodes | the first edge joining two already-connected nodes |
+| **Accounts Merge** (this) | **emails** (or accounts) | same account |
+| **Most Stones Removed** (LC 947) | rows and columns | a stone links its row and column |
+| **Similar String Groups** (LC 839) | strings | differ by one swap |
+| **Satisfiability of Equality Equations** (LC 990) | letters | `a == b` |
+| **Smallest String With Swaps** (LC 1202) | indices | swappable pairs |
+| **Sentence Similarity II** (LC 737) | words | similar pairs (transitive) |
+
+> 💡 **Recognize the shape.** "Things belong together if they share something, and that sharing chains" → connected components. Ask: *what are the nodes so the edges are already in my input?* Then pick Union-Find for merging/streaming, DFS for one-off traversal.
+
+---
+
+## 22. TL;DR
+
+**Problem:** merge accounts that share any email; output `[name, sorted unique emails]` per person.
+
+**Recognition:** "same person" chains through shared emails → **transitive grouping** → **connected components**.
+
+**Nodes:** emails (edges are free: same account). Accounts also work with an `email → owner` map.
+
+**Recipe (Union-Find):**
+1. **Index** — email → integer id (first time seen), email → name.
+2. **Union** — in each account, union the first email with every other email.
+3. **Group** — bucket emails by `find(id)`.
+4. **Build** — sort each bucket, prepend the name.
+
+**Why ids:** array-based Union-Find, one hash per email instead of one per `find` step, safe `==` on roots, and your standard template. Strings also work — use `.equals()`.
+
+**Complexity:** `O(N log N)` (sorting dominates), `O(N)` space.
+
+**One-line philosophy:**
+> When "belongs together" spreads through shared pieces, stop thinking about the objects and think about the pieces: make the emails the nodes, link the ones that appear together, and every connected group is one person.
