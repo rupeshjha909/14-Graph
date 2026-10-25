@@ -1,128 +1,112 @@
 import java.util.*;
 
-public class BipartiteCheck {
-    
-    // Adjacency list — array of lists (Java equivalent of vector<int> gr[N])
-    private static List<List<Integer>> gr;
-    
-    // Visited/color array — 0 = unvisited, 1 = color A, 2 = color B
-    private static int[] vis;
-    
-    // Flag to indicate if an odd-length cycle was detected
-    private static boolean oddCycle = false;
-    
-    /**
-     * DFS to color the graph and detect odd-length cycles.
-     * @param cur Current node being visited
-     * @param par Parent node (the one we came from)
-     * @param col Color to assign to current node (1 or 2)
-     */
-    private static void dfs(int cur, int par, int col) {
-        vis[cur] = col;
-        
-        // Visit all neighbors of current node
-        for (int child : gr.get(cur)) {
-            if (vis[child] == 0) {
-                // Unvisited: recurse with opposite color
-                // 3 - col flips between 1 and 2 (3-1=2, 3-2=1)
-                dfs(child, cur, 3 - col);
-            } else if (child != par && col == vis[child]) {
-                // Already visited AND same color as current → odd cycle found
-                // (Back edge to a node of the same color = odd-length cycle)
-                oddCycle = true;
+public class BipartiteMatrix {
+
+    // =====================================================================
+    // Step 1: convert the adjacency matrix into an adjacency list
+    // graph[u][v] == 1 means an edge between u and v (0-indexed, V x V)
+    // =====================================================================
+    private static List<List<Integer>> toAdjList(int[][] graph, int V) {
+        List<List<Integer>> adj = new ArrayList<>();
+        for (int i = 0; i < V; i++) adj.add(new ArrayList<>());
+
+        for (int u = 0; u < V; u++) {
+            for (int v = 0; v < V; v++) {
+                if (graph[u][v] == 1) adj.get(u).add(v);   // row u already holds both directions
             }
         }
+        return adj;
     }
-    
-    public static void solve(Scanner scanner) {
-        // n = number of vertices, m = number of edges
-        int n = scanner.nextInt();
-        int m = scanner.nextInt();
-        
-        // Initialize adjacency list (1-indexed, so size n+1)
-        gr = new ArrayList<>();
-        for (int i = 0; i <= n; i++) {
-            gr.add(new ArrayList<>());
+
+    // =====================================================================
+    // DFS version
+    // color[u]: 0 = not visited, 1 = color A, 2 = color B
+    // =====================================================================
+    public static boolean isBipartiteDFS(int[][] graph, int V) {
+        List<List<Integer>> adj = toAdjList(graph, V);
+        int[] color = new int[V];
+
+        // Loop over every vertex so disconnected components are also checked
+        for (int start = 0; start < V; start++) {
+            if (color[start] == 0) {
+                if (!dfs(adj, start, 1, color)) return false;
+            }
         }
-        
-        // Initialize visited array (1-indexed)
-        vis = new int[n + 1];
-        oddCycle = false;
-        
-        // Read m edges (undirected, so add both directions)
-        for (int i = 0; i < m; i++) {
-            int x = scanner.nextInt();
-            int y = scanner.nextInt();
-            gr.get(x).add(y);
-            gr.get(y).add(x);
-        }
-        
-        // Start DFS from node 1 with color 1 and parent 0 (sentinel)
-        dfs(1, 0, 1);
-        
-        if (oddCycle) {
-            System.out.println("not bipartite");
-        } else {
-            System.out.println("bipartite");
-        }
+        return true;
     }
-    
+
+    private static boolean dfs(List<List<Integer>> adj, int u, int col, int[] color) {
+        color[u] = col;
+
+        for (int v : adj.get(u)) {
+            if (color[v] == 0) {                          // unvisited -> give opposite color
+                if (!dfs(adj, v, 3 - col, color)) return false;
+            } else if (color[v] == col) {                 // neighbor has SAME color -> odd cycle
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // =====================================================================
+    // BFS version
+    // =====================================================================
+    public static boolean isBipartiteBFS(int[][] graph, int V) {
+        List<List<Integer>> adj = toAdjList(graph, V);
+        int[] color = new int[V];
+        Deque<Integer> queue = new ArrayDeque<>();
+
+        for (int start = 0; start < V; start++) {
+            if (color[start] != 0) continue;              // already colored in an earlier component
+
+            color[start] = 1;
+            queue.offer(start);
+
+            while (!queue.isEmpty()) {
+                int u = queue.poll();
+                for (int v : adj.get(u)) {
+                    if (color[v] == 0) {                  // unvisited -> opposite color, enqueue
+                        color[v] = 3 - color[u];
+                        queue.offer(v);
+                    } else if (color[v] == color[u]) {    // same color on both ends -> not bipartite
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    // ---------------------------------------------------------------------
+    // Demo
+    // ---------------------------------------------------------------------
     public static void main(String[] args) {
-        Scanner scanner = new Scanner(System.in);
-        solve(scanner);
-        scanner.close();
+        // Even cycle 0-1-2-3-0  -> bipartite
+        int[][] square = {
+            {0, 1, 0, 1},
+            {1, 0, 1, 0},
+            {0, 1, 0, 1},
+            {1, 0, 1, 0}
+        };
+
+        // Triangle 0-1-2-0 (odd cycle) -> not bipartite
+        int[][] triangle = {
+            {0, 1, 1},
+            {1, 0, 1},
+            {1, 1, 0}
+        };
+
+        // Disconnected: edge 0-1, plus triangle 2-3-4 -> not bipartite
+        int[][] disconnected = {
+            {0, 1, 0, 0, 0},
+            {1, 0, 0, 0, 0},
+            {0, 0, 0, 1, 1},
+            {0, 0, 1, 0, 1},
+            {0, 0, 1, 1, 0}
+        };
+
+        System.out.println("square:       DFS=" + isBipartiteDFS(square, 4)       + "  BFS=" + isBipartiteBFS(square, 4));
+        System.out.println("triangle:     DFS=" + isBipartiteDFS(triangle, 3)     + "  BFS=" + isBipartiteBFS(triangle, 3));
+        System.out.println("disconnected: DFS=" + isBipartiteDFS(disconnected, 5) + "  BFS=" + isBipartiteBFS(disconnected, 5));
     }
-}
-
-
-
-
-std::vector<int> gr[N];//array of vector
-int vis[N];
-bool odd_cycle = 0;
-//dfs has current assignment,parent and colour
-void dfs(int cur, int par, int col)
-{
-    vis[cur] = col;
-    //lets go to all child in this graph
-    for (auto child : gr[cur])
-    {
-        if (vis[child] == 0)//if visited[child]==0 means not visited then make cur as parent
-            dfs(child, cur, 3 - col);
-        else if (child != par and col == vis[child])//if already visited and colour of current vertex==visited of next vertex
-        {
-            //backedge and odd length cycle
-            odd_cycle = 1;
-        }
-    }
-    return;
-}
-
-void solve()
-{
-    //n--number of vertices
-    //m--number of edges
-    int n, m;
-    cin >> n >> m;
-    for (int i = 0; i < m; i++)
-    {
-        int x, y;
-        cin >> x >> y;
-        //assume birdirection edges
-        gr[x].pb(y);
-        gr[y].pb(x);
-    }
-    dfs(1, 0, 1);
-    if (odd_cycle)
-        cout << "not bipartite\n";
-    else
-        cout << "bipartite";
-}
-
-int main()
-{
-    ios_base::sync_with_stdio(false);
-    cin.tie(NULL);
-    cout.tie(NULL);
-    solve();
 }
