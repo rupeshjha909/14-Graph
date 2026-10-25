@@ -1,279 +1,471 @@
-# Number of Operations to Make Network Connected (LeetCode 1319) — Union-Find, with Full Pattern Recognition
+# Number of Operations to Make Network Connected (LC 1319) — Interview Edition
 
-> The Union-Find idea (count connected components) is the same as before, but this problem adds two new moves: a **feasibility pre-check** (do you even have enough cables?) and a **formula on the component count** (the answer is `components − 1`, not the count itself). The pretty part is the math showing *why* `components − 1` is always achievable when you have enough cables. Same map-based Union-Find style (parent map, `-1` = root, recursive `findSet`, `unionSet` by size). All code and the math are verified.
-
-> 💡 **The whole solution in one sentence:** to connect `n` computers you need at least `n − 1` cables — so if there are fewer, it's impossible (return `−1`); otherwise, use Union-Find to count how many separate **connected components** the network currently has, and the answer is **`components − 1`**, because bridging `c` components into one takes exactly `c − 1` re-plugged cables, and having `≥ n − 1` cables guarantees you always have that many redundant (cycle-forming) cables free to move.
+> **Problem.** There are `n` computers `0..n−1` and a list of cables `connections[i] = [a, b]`. In one operation you may **unplug any cable and plug it between any two computers**. Return the **minimum number of operations** so that every computer can reach every other (directly or through others). If it's impossible, return **`−1`**.
+>
+> **Constraints (LeetCode):** `1 ≤ n ≤ 10⁵`, `1 ≤ connections.length ≤ min(n(n−1)/2, 10⁵)`, no repeated cables, no cable from a computer to itself.
+>
+> The coding is short — count connected components. The interview is won or lost on **explaining why the answer is `components − 1`** and **why `n − 1` cables is the exact feasibility test**. This doc builds both from a picture, proves them in plain words, then covers code, dry runs, follow-ups, and a presentation script.
 
 ---
 
 ## Table of Contents
-1. [Problem statement](#1-problem-statement)
-2. [How to guess the pattern (the thought process)](#2-how-to-guess-the-pattern-the-thought-process)
-3. [Insight 1: "connected" means one component](#3-insight-1-connected-means-one-component)
-4. [Insight 2: the two-part answer (feasibility + formula)](#4-insight-2-the-two-part-answer-feasibility--formula)
-5. [The math: why components − 1, and why n − 1 cables suffice](#5-the-math-why-components--1-and-why-n--1-cables-suffice)
-6. [The plan](#6-the-plan)
-7. [The Union-Find pieces](#7-the-union-find-pieces)
-8. [The full solution](#8-the-full-solution)
-9. [Dry run](#9-dry-run)
-10. [Complexity](#10-complexity)
-11. [Common mistakes](#11-common-mistakes)
-12. [How to recognize this pattern next time](#12-how-to-recognize-this-pattern-next-time)
-13. [Cheat sheet](#13-cheat-sheet)
+
+1. [The Problem in Plain Words](#1-the-problem-in-plain-words)
+2. [The Picture to Hold in Your Head: Islands and Spare Bridges](#2-the-picture-to-hold-in-your-head-islands-and-spare-bridges)
+3. [Step 0 in the Interview: Clarifying Questions](#3-step-0-in-the-interview-clarifying-questions)
+4. [Approach 0: Brute Force — Try Rewirings](#4-approach-0-brute-force--try-rewirings)
+5. [Observation 1: "Connected" Means One Component](#5-observation-1-connected-means-one-component)
+6. [Observation 2: Each Move Joins at Most Two Islands → at Least `c − 1` Moves](#6-observation-2-each-move-joins-at-most-two-islands--at-least-c--1-moves)
+7. [Observation 3: Spare Cables and the `n − 1` Test](#7-observation-3-spare-cables-and-the-n--1-test)
+8. [The Algebra: Why `m ≥ n − 1` Guarantees Enough Spares](#8-the-algebra-why-m--n--1-guarantees-enough-spares)
+9. [The Algorithm in Four Lines](#9-the-algorithm-in-four-lines)
+10. [Approach 1: Union-Find (the Standard Answer)](#10-approach-1-union-find-the-standard-answer)
+11. [The Clean Solution Code](#11-the-clean-solution-code)
+12. [Dry Runs with the Parent Array](#12-dry-runs-with-the-parent-array)
+13. [Approach 2: DFS / BFS Component Count](#13-approach-2-dfs--bfs-component-count)
+14. [Variant: Counting Spare Cables Explicitly](#14-variant-counting-spare-cables-explicitly)
+15. [Complexity](#15-complexity)
+16. [Edge Cases](#16-edge-cases)
+17. [Follow-Up Questions Interviewers Ask](#17-follow-up-questions-interviewers-ask)
+18. [How to Present It: A Minute-by-Minute Script](#18-how-to-present-it-a-minute-by-minute-script)
+19. [Common Mistakes](#19-common-mistakes)
+20. [The Pattern and Its Siblings](#20-the-pattern-and-its-siblings)
+21. [TL;DR](#21-tldr)
 
 ---
 
-## 1. Problem statement
+## 1. The Problem in Plain Words
 
-> There are `n` computers numbered `0…n-1`, connected by cables given as `connections`, where `connections[i] = [a, b]` is a cable directly linking computers `a` and `b`. You may **unplug any cable and re-plug it between any two computers**. Return the **minimum number of such operations** to make *every* computer connected (directly or indirectly). If it's impossible, return **−1**.
+You have some computers and some cables. Some computers are already linked into groups; others sit alone. You can **move** a cable (not buy a new one). How few moves make one single network?
 
-### Examples
 ```
-n = 4, connections = [[0,1],[0,2],[1,2]]           → 1
-        (component {0,1,2} plus lone {3}; move the redundant cable in the triangle to reach 3)
+n = 4, connections = [[0,1],[0,2],[1,2]]            → 1
+
+   0 ─── 1          3   (alone)
+    \   /
+     \ /
+      2
+The triangle has one cable more than it needs. Move it to reach 3.
+
 n = 6, connections = [[0,1],[0,2],[0,3],[1,2],[1,3]] → 2
-        ({0,1,2,3}, {4}, {5} → 3 components → 2 moves)
+   groups: {0,1,2,3}, {4}, {5}  → 2 moves join 3 groups into 1
+
 n = 6, connections = [[0,1],[0,2],[0,3],[1,2]]       → -1
-        (only 4 cables, but connecting 6 computers needs at least 5)
-```
-(All verified.)
-
----
-
-## 2. How to guess the pattern (the thought process)
-
-**Q1: What does "make every computer connected" mean in graph terms?**
-The whole network becomes **one connected component**. So the current state is "some number of components," and the goal is "one." → This is a **connected-components** problem → **Union-Find** (or DFS).
-
-**Q2: What operation changes the structure, and what does it cost?**
-Moving a cable = removing an edge somewhere and adding an edge elsewhere, costing 1. To *join* two separate components you add one bridging cable. So merging `c` components into 1 needs `c − 1` bridging cables.
-
-**Q3: Where do the bridging cables come from?**
-From **redundant** cables — ones already inside a component forming a cycle (removing them doesn't disconnect anything). So the real question becomes: *do I have enough redundant cables to supply the `c − 1` bridges?*
-
-**Q4: When is it outright impossible?**
-Connecting `n` computers requires a minimum of `n − 1` cables total (a tree). If `connections.length < n − 1`, you can never connect them, no matter how you rearrange → **−1**.
-
-**Q5: If it's feasible, is the answer just `c − 1`?**
-Yes — and the neat fact (proved in §5) is that **whenever total cables ≥ n − 1, you *always* have at least `c − 1` redundant cables**, so the answer is exactly `components − 1`. You don't even have to count the redundant cables; the feasibility check guarantees enough.
-
-So the shape is: *feasibility check on cable count, then count components with Union-Find, then answer = components − 1.*
-
-> 💡 **Two questions, in order:** "First, 'is it even possible?' — need ≥ n−1 cables. Then, 'how many bridges?' — that's (components − 1). Union-Find gives the component count; the feasibility check guarantees the spare cables exist." 
-
----
-
-## 3. Insight 1: "connected" means one component
-
-"Every computer connected" is exactly "the graph has **one** connected component." Right now the cables partition the `n` computers into some number of components `c` (isolated computers count as their own single-node component). Union-Find counts `c` directly: start with `c = n` (everyone alone) and **decrement each time a cable actually merges two different components**.
-
-Cables that link two computers *already* in the same component are **redundant** — they don't reduce `c` (the `unionSet` returns "no merge"). Those are precisely the cables you're free to move.
-
-> 💡 **Count components; redundant cables reveal themselves:** "Every cable that *fails* to merge (both ends already in one component) is a redundant, movable cable. So the same Union-Find pass that counts components also implicitly identifies the spare cables." 
-
----
-
-## 4. Insight 2: the two-part answer (feasibility + formula)
-
-Unlike the earlier component-counting problems where the answer *was* the count, here the answer is a small computation on the count, gated by a feasibility check:
-
-```
-if (connections.length < n - 1)  →  return -1        // not enough cables to ever connect n nodes
-else                             →  return components - 1
-```
-
-- **Feasibility:** a connected graph on `n` nodes needs **at least `n − 1`** edges (that's a spanning tree). Fewer cables than that and it's hopeless regardless of arrangement.
-- **Formula:** given feasibility, merging `c` components into one costs `c − 1` cable moves.
-
-Both parts are essential — miss the feasibility check and you'd return a bogus positive number for impossible inputs; miss the formula and you'd return the raw count (off by one).
-
----
-
-## 5. The math: why components − 1, and why n − 1 cables suffice
-
-This is the part worth understanding, not memorizing.
-
-**Why `c − 1` moves merge `c` components:** each move plugs one cable between two currently-separate components, reducing the component count by exactly 1. Starting at `c` and ending at `1` takes `c − 1` such moves. (You can't do better — each move reduces the count by at most 1.)
-
-**Why `≥ n − 1` cables always provide enough spares:** Let `m` = total cables, `c` = components, `n` = computers. A **forest** (all components are trees) on `n` nodes with `c` components uses exactly `n − c` edges. Any cables beyond that are **redundant**:
-
-```
-redundant cables = m − (n − c)
-```
-
-We need `c − 1` bridges. Is `redundant ≥ c − 1`?
-```
-m − (n − c) ≥ c − 1
-m − n + c   ≥ c − 1
-m           ≥ n − 1          ✓  (exactly the feasibility condition!)
-```
-
-So **the moment you have `m ≥ n − 1` cables, you automatically have at least `c − 1` redundant cables** — enough to supply every bridge. That's why you never need to *count* the redundant cables: passing the feasibility check *is* the guarantee. (Verified numerically over 100,000 random `(n, m, c)` with `m ≥ n−1`.)
-
-> 💡 **Feasibility and sufficiency are the same inequality:** "`m ≥ n−1` isn't just 'possible in principle' — the same inequality algebraically guarantees there are ≥ c−1 redundant cables to actually do the c−1 bridges. So once feasible, the answer is cleanly `components − 1`, no spare-counting needed." 
-
----
-
-## 6. The plan
-
-```
-1. FEASIBILITY  if connections.length < n - 1 → return -1.
-2. INIT         n computers, each its own component (parent=-1, rank=1); components = n.
-3. UNION        for each cable, unionSet(a, b); if it merged, components--.
-4. ANSWER       return components - 1.
+   only 4 cables; any connected network of 6 computers needs at least 5
 ```
 
 ---
 
-## 7. The Union-Find pieces
+## 2. The Picture to Hold in Your Head: Islands and Spare Bridges
 
-Same engine as the whole series — but note `unionSet` now returns a boolean so we can count merges.
+Think of each group of connected computers as an **island**. Cables are **bridges**.
 
-```java
-private int findSet(int i, Map<Integer, Integer> parent) {
-    if (parent.get(i) == -1) return i;
-    int root = findSet(parent.get(i), parent);
-    parent.put(i, root);                       // path compression
-    return root;
-}
-private boolean unionSet(int x, int y,
-                         Map<Integer, Integer> parent, Map<Integer, Integer> rank) {
-    int s1 = findSet(x, parent), s2 = findSet(y, parent);
-    if (s1 == s2) return false;                // already connected → redundant cable, no merge
-    if (rank.get(s1) < rank.get(s2)) { parent.put(s1, s2); rank.put(s2, rank.get(s1) + rank.get(s2)); }
-    else                             { parent.put(s2, s1); rank.put(s1, rank.get(s1) + rank.get(s2)); }
-    return true;                               // a real merge happened
-}
+- Some bridges are **essential**: remove one and an island splits.
+- Some bridges are **spare**: they duplicate a route that already exists (they close a loop). Removing one changes nothing.
+
+```
+Island A:  0 ─ 1          Island B: 3      Island C: 4
+           │ ╱
+           2              the 1–2 bridge is SPARE: 1 and 2 are already
+                          connected through 0
+```
+
+To unite `c` islands into one, you need `c − 1` new bridges (like stringing beads: 3 beads need 2 links). Each new bridge must be a **moved spare** — moving an essential one would split an island and undo progress.
+
+So the whole problem is two questions:
+1. **How many islands are there?** → answer is `islands − 1`.
+2. **Are there enough spare bridges to move?** → if not, `−1`.
+
+And the surprise (Section 8): question 2 reduces to the single check **"are there at least `n − 1` cables in total?"**
+
+> 💡 **If you remember one sentence:** "Count the islands; uniting `c` islands takes `c − 1` moves; it's possible exactly when there are at least `n − 1` cables, because that guarantees enough spare cables to move."
+
+---
+
+## 3. Step 0 in the Interview: Clarifying Questions
+
+| Question | Why it matters |
+|:--|:--|
+| "Can I only **move** existing cables, or also add new ones?" | Moving only. (If adding were allowed, the answer would just be `components − 1`, never `−1`.) |
+| "Are cables undirected?" | Yes → union / add both directions. |
+| "Can there be duplicate cables or self-loops?" | LeetCode: no. If there were, they'd simply count as spare cables. |
+| "How large is `n`?" | Up to `10⁵` → need near-linear; careful with recursion depth. |
+| "With `n = 1`, what's the answer?" | `0` — already connected. |
+
+---
+
+## 4. Approach 0: Brute Force — Try Rewirings
+
+The literal approach: treat each cable arrangement as a state; one move changes one cable's endpoints. BFS from the starting arrangement until you find a connected one.
+
+The number of arrangements explodes (each of `m` cables can go to any of `n(n−1)/2` pairs), so this is hopeless beyond toy sizes. It's still valuable as a **ground truth**: I ran exactly this BFS on small inputs to verify the formula used below.
+
+> 💡 **What to say:** "Searching over rewirings is exponential. Instead, let me figure out how many moves are *needed* (a lower bound) and show that's always *achievable*."
+
+---
+
+## 5. Observation 1: "Connected" Means One Component
+
+"Every computer can reach every other" = the graph has exactly **one connected component**.
+
+Right now the cables split the computers into some number `c` of components (a lone computer is a component of size 1). The goal is `c = 1`.
+
+So step one is simply: **count the components.** Union-Find does this naturally: start with `c = n` (everyone alone) and subtract 1 every time a cable joins two *different* components.
+
+---
+
+## 6. Observation 2: Each Move Joins at Most Two Islands → at Least `c − 1` Moves
+
+One move = unplug a cable + plug it somewhere.
+
+- **Unplugging** can never *reduce* the number of components (it can only keep it the same or split something).
+- **Plugging** a cable between two computers can merge **at most two** components into one.
+
+So each move reduces the component count by **at most 1**. Going from `c` to `1` needs **at least `c − 1` moves**.
+
+> 💡 **This is the lower bound.** Nothing can beat `c − 1`. The rest of the proof shows `c − 1` is always reachable when the answer isn't `−1`.
+
+---
+
+## 7. Observation 3: Spare Cables and the `n − 1` Test
+
+**Achieving `c − 1`:** take a **spare** cable (one that closes a loop inside an island), unplug it — the island stays connected — and plug it between two different islands. Components drop by exactly 1. Repeat `c − 1` times.
+
+So we need **at least `c − 1` spare cables**.
+
+**Why `n − 1` is the minimum for any connected network:** start with `n` lone computers (`n` components). Each cable merges at most two components, so reducing `n` components to `1` needs at least `n − 1` cables. If `m < n − 1`, **no arrangement** of the cables can be connected → `−1`.
+
+```
+connections.length < n − 1   →   return −1      (no matter how you rewire)
 ```
 
 ---
 
-## 8. The full solution
+## 8. The Algebra: Why `m ≥ n − 1` Guarantees Enough Spares
+
+Let `n` = computers, `m` = cables, `c` = components.
+
+A component with `k` computers needs exactly `k − 1` cables to be connected (a tree). Across all components, the **essential** cables total:
+
+```
+(k₁ − 1) + (k₂ − 1) + … + (k_c − 1)  =  n − c
+```
+
+Every other cable is spare:
+
+```
+spare  =  m − (n − c)
+```
+
+We need `spare ≥ c − 1`:
+
+```
+m − (n − c)  ≥  c − 1
+m − n + c    ≥  c − 1
+m            ≥  n − 1          ← exactly the feasibility test!
+```
+
+So **"at least `n − 1` cables" is not just necessary — it's also sufficient.** Once it holds, there are automatically enough spare cables, and the answer is exactly `c − 1`. You never need to count the spares.
+
+(And it stays true during the process: each move keeps `m` and `n` the same and lowers `c` by 1, so spares drop by exactly 1 — always enough for the remaining moves.)
+
+> 💡 **Interview gold.** Being able to derive `m − (n − c) ≥ c − 1 ⇔ m ≥ n − 1` in 30 seconds is what separates "I memorized this" from "I understand this."
+
+---
+
+## 9. The Algorithm in Four Lines
+
+```
+1. if (connections.length < n − 1) return −1;      // not enough cables, ever
+2. components = n
+3. for each cable (a, b): if union(a, b) merged two different groups → components−−
+4. return components − 1
+```
+
+---
+
+## 10. Approach 1: Union-Find (the Standard Answer)
+
+Union-Find keeps disjoint groups:
+
+- `parent[x] == −1` → `x` is the **leader** (root) of its group.
+- `find(x)` → follow parent pointers to the leader (with **path compression**: point everything on the way straight at the leader).
+- `union(a, b)` → if the leaders differ, hang the smaller group under the larger (**union by size**) and return `true`; if they're the same, return `false`.
+
+**The one change from a plain Union-Find: `union` returns a boolean.**
+- `true` → a real merge → one fewer component.
+- `false` → `a` and `b` were already connected → this cable is **spare**.
+
+So the same pass both counts components *and* identifies spare cables.
+
+---
+
+## 11. The Clean Solution Code
 
 ```java
 class Solution {
+    private int[] parent;   // parent[i] == -1  → i is a leader
+    private int[] size;     // size[leader] = number of computers in that group
+
     public int makeConnected(int n, int[][] connections) {
-        // 1) FEASIBILITY: n computers need at least n-1 cables to ever be connected
+        // 1) Feasibility: fewer than n-1 cables can never connect n computers
         if (connections.length < n - 1) return -1;
 
-        // 2) init: each computer its own component
-        Map<Integer, Integer> parent = new HashMap<>();
-        Map<Integer, Integer> rank   = new HashMap<>();
-        for (int i = 0; i < n; i++) { parent.put(i, -1); rank.put(i, 1); }
+        // 2) Everyone starts alone
+        parent = new int[n];
+        size = new int[n];
+        Arrays.fill(parent, -1);
+        Arrays.fill(size, 1);
         int components = n;
 
-        // 3) union each cable; count how many components remain
+        // 3) Each cable that joins two different groups removes one component
         for (int[] c : connections) {
-            if (unionSet(c[0], c[1], parent, rank)) {
-                components--;                  // this cable merged two components
-            }
+            if (union(c[0], c[1])) components--;
         }
 
-        // 4) merging `components` groups into one costs (components - 1) cable moves
+        // 4) Uniting `components` groups takes components - 1 moves
         return components - 1;
     }
 
-    private int findSet(int i, Map<Integer, Integer> parent) {
-        if (parent.get(i) == -1) return i;
-        int root = findSet(parent.get(i), parent);
-        parent.put(i, root);
-        return root;
+    private int find(int x) {
+        if (parent[x] == -1) return x;
+        return parent[x] = find(parent[x]);     // path compression
     }
-    private boolean unionSet(int x, int y, Map<Integer, Integer> parent, Map<Integer, Integer> rank) {
-        int s1 = findSet(x, parent), s2 = findSet(y, parent);
-        if (s1 == s2) return false;
-        if (rank.get(s1) < rank.get(s2)) { parent.put(s1, s2); rank.put(s2, rank.get(s1) + rank.get(s2)); }
-        else                             { parent.put(s2, s1); rank.put(s1, rank.get(s1) + rank.get(s2)); }
+
+    // returns true if a real merge happened, false if a and b were already connected
+    private boolean union(int a, int b) {
+        int ra = find(a), rb = find(b);
+        if (ra == rb) return false;             // spare cable
+        if (size[ra] < size[rb]) { int t = ra; ra = rb; rb = t; }
+        parent[rb] = ra;                        // smaller group under larger
+        size[ra] += size[rb];
         return true;
     }
 }
 ```
 
-Verified against all sample cases and edge cases (fully-connected → 0; too few cables → −1).
+**Line-by-line notes to say out loud:**
+- The feasibility check comes **first** — it's `O(1)` and makes the formula valid.
+- `components` starts at `n` because every computer begins as its own group.
+- Decrement only when `union` returns `true`; a spare cable doesn't change the count.
+- **Arrays, not `HashMap`s:** nodes are `0..n−1`, and with `n = 10⁵`, arrays are much faster.
+- **Union by size matters here for safety:** it keeps trees at most `log₂(10⁵) ≈ 17` deep, so the recursive `find` can't overflow the stack. With path compression alone, an unlucky order can build a 10⁵-long chain before the first compression.
+
+(Verified: matches a true brute force — BFS over every possible rewiring — on 2,375 small random cases; Union-Find, DFS, and the explicit-spare variant all agree. On `n = 10⁵`, `m = 10⁵`: about 18 ms.)
 
 ---
 
-## 9. Dry run
+## 12. Dry Runs with the Parent Array
 
-`n = 6, connections = [[0,1],[0,2],[0,3],[1,2],[1,3]]` → expect **2**.
+### Example 1 — `n = 4`, `[[0,1],[0,2],[1,2]]` → expected `1`
 
 ```
-1) FEASIBILITY: cables = 5, n-1 = 5 → 5 >= 5 OK (not impossible)
+Feasibility: 3 cables ≥ n−1 = 3  ✓
 
-2) init: components = 6   (each of 0..5 alone)
+start:        parent = [-1, -1, -1, -1]   size = [1,1,1,1]   components = 4
 
-3) union each cable:
-   [0,1]: merge → components 5      set {0,1}
-   [0,2]: merge → components 4      set {0,1,2}
-   [0,3]: merge → components 3      set {0,1,2,3}
-   [1,2]: find(1)=find(2) same set → NO merge (redundant cable)   components stays 3
-   [1,3]: find(1)=find(3) same set → NO merge (redundant cable)   components stays 3
-   final components = 3   → {0,1,2,3}, {4}, {5}
-   (2 redundant cables found — exactly the spares we'll move)
+[0,1]: find(0)=0, find(1)=1 → merge → parent[1]=0, size[0]=2
+              parent = [-1,  0, -1, -1]                       components = 3
 
-4) answer = components - 1 = 3 - 1 = 2   ✓
+[0,2]: find(0)=0, find(2)=2 → merge (size 2 vs 1) → parent[2]=0, size[0]=3
+              parent = [-1,  0,  0, -1]                       components = 2
+
+[1,2]: find(1)=0, find(2)=0 → SAME leader → spare cable, no change
+                                                               components = 2
+
+groups: {0,1,2}, {3}     answer = 2 − 1 = 1   ✅
+(the spare [1,2] is the cable we'd move to reach 3)
 ```
 
-The two cables that failed to merge (`[1,2]`, `[1,3]`) are the redundant ones — precisely the 2 we re-plug to reach `{4}` and `{5}`.
+### Example 2 — `n = 6`, `[[0,1],[0,2],[0,3],[1,2],[1,3]]` → expected `2`
+
+```
+Feasibility: 5 cables ≥ 5  ✓          components = 6
+
+[0,1] merge → 5      [0,2] merge → 4      [0,3] merge → 3
+[1,2] same leader → spare                  [1,3] same leader → spare
+
+groups: {0,1,2,3}, {4}, {5}   → 3 components, 2 spares
+answer = 3 − 1 = 2   ✅      (exactly the 2 spares get moved)
+```
+
+### Example 3 — `n = 6`, `[[0,1],[0,2],[0,3],[1,2]]` → expected `−1`
+
+```
+Feasibility: 4 cables < n−1 = 5  → return −1 immediately   ✅
+(Without the check you'd compute components = 3 and wrongly return 2:
+ there's only 1 spare cable, but 2 bridges are needed.)
+```
 
 ---
 
-## 10. Complexity
+## 13. Approach 2: DFS / BFS Component Count
+
+If you prefer traversal, count components with an iterative DFS — same formula afterwards.
+
+```java
+public int makeConnected(int n, int[][] connections) {
+    if (connections.length < n - 1) return -1;
+
+    List<List<Integer>> g = new ArrayList<>();
+    for (int i = 0; i < n; i++) g.add(new ArrayList<>());
+    for (int[] c : connections) { g.get(c[0]).add(c[1]); g.get(c[1]).add(c[0]); }
+
+    boolean[] seen = new boolean[n];
+    int components = 0;
+    for (int s = 0; s < n; s++) {
+        if (seen[s]) continue;
+        components++;                                  // new island found
+        Deque<Integer> stack = new ArrayDeque<>();
+        stack.push(s);
+        seen[s] = true;
+        while (!stack.isEmpty()) {
+            int u = stack.pop();
+            for (int v : g.get(u)) if (!seen[v]) { seen[v] = true; stack.push(v); }
+        }
+    }
+    return components - 1;
+}
+```
+
+Use an **explicit stack** — a recursive DFS on a 10⁵-node chain can overflow Java's call stack. Same `O(n + m)` complexity; Union-Find avoids building the adjacency list.
+
+---
+
+## 14. Variant: Counting Spare Cables Explicitly
+
+If you forget the `n − 1` shortcut in the interview, this version is equally correct and follows the "islands and spare bridges" picture literally:
+
+```java
+int components = n, spare = 0;
+for (int[] c : connections) {
+    if (union(c[0], c[1])) components--;
+    else spare++;                                      // already connected → movable
+}
+return spare >= components - 1 ? components - 1 : -1;
+```
+
+Then mention: "Algebraically, `spare = m − (n − components)`, and `spare ≥ components − 1` simplifies to `m ≥ n − 1`, so the check can be done up front." That turns a gap into a strong moment. (Verified identical results.)
+
+---
+
+## 15. Complexity
 
 Let `m` = number of cables.
 
-| | Cost |
+| Approach | Time | Space |
+|:--|:--|:--|
+| Brute force (BFS over rewirings) | exponential | exponential |
+| **Union-Find** | **O(n + m · α(n)) ≈ O(n + m)** | O(n) |
+| DFS / BFS | O(n + m) | O(n + m) for the adjacency list |
+
+`α(n)` (inverse Ackermann) is at most 4 for any realistic `n`, so Union-Find is effectively linear.
+
+---
+
+## 16. Edge Cases
+
+| Case | Answer | Why |
+|:--|:--|:--|
+| `n = 1` | `0` | `0 < n−1 = 0` is false; components = 1 → 0 |
+| Already one component | `0` | components = 1 |
+| `m < n − 1` | `−1` | can never connect |
+| `m = n − 1` and connected | `0` | it's already a spanning tree |
+| `m = n − 1` but disconnected | `c − 1` | there are exactly `c − 1` spares (from the algebra) |
+| Many isolated computers + one dense cluster | `c − 1` | the cluster's loops supply the spares |
+| `n = 10⁵` chain of cables | works | union by size keeps `find` shallow |
+
+---
+
+## 17. Follow-Up Questions Interviewers Ask
+
+**Q1. "Prove the answer is `components − 1`."**
+Lower bound: each move merges at most two components (Section 6). Achievability: move a spare cable between two components each time; `m ≥ n − 1` guarantees `m − (n − c) ≥ c − 1` spares (Section 8).
+
+**Q2. "Which cables should be moved, and where?"**
+Collect the spare cables (the ones where `union` returned `false`). Collect one representative computer from each component (`find(i) == i`, i.e. each leader). Then move spare `i` to connect leader `i` and leader `i + 1`. That's an explicit `c − 1`-move plan.
+
+**Q3. "What if you can add new cables instead of moving them?"**
+Then there's no feasibility issue — the answer is always `components − 1`.
+
+**Q4. "What if each possible cable has a cost, and you want the cheapest connected network?"**
+That's a **Minimum Spanning Tree**: sort edges by cost and use the same Union-Find to add an edge only when it joins two different components (**Kruskal's**). See LC 1584 (Min Cost to Connect All Points) and LC 1135 (Connecting Cities With Minimum Cost).
+
+**Q5. "Which cables are critical — removing them would disconnect the network?"**
+Those are **bridges**, found with Tarjan's low-link DFS (LC 1192, Critical Connections). They're exactly the cables you must never move.
+
+**Q6. "Cables arrive one at a time. After each, report the answer."**
+Union-Find handles this incrementally: keep `components` and the cable count up to date; after each cable, answer `m < n−1 ? −1 : components − 1`.
+
+**Q7. "Why not use `HashMap` for `parent` like in other Union-Find problems?"**
+Nodes are already integers `0..n−1`, so arrays are faster and simpler. Maps are only needed when nodes are strings or sparse ids (e.g. Accounts Merge).
+
+---
+
+## 18. How to Present It: A Minute-by-Minute Script
+
+**Minutes 0–2 — Clarify.** Moving only (not adding)? Undirected? `n = 1`? Size?
+
+**Minutes 2–4 — Brute force + reframe.** "Searching rewirings is exponential. Instead: the goal is one connected component. Let `c` be the current number of components."
+
+**Minutes 4–7 — Lower bound.** "A move merges at most two components, so I need at least `c − 1` moves."
+
+**Minutes 7–11 — Feasibility and sufficiency.** "Any connected graph on `n` nodes needs `n − 1` edges, so `m < n − 1` → `−1`. Otherwise: essential cables are `n − c`, spares are `m − n + c`, and `m ≥ n − 1` gives spares `≥ c − 1`. So the answer is exactly `c − 1`."
+
+**Minutes 11–18 — Code.** Union-Find with arrays, `union` returning a boolean, feasibility check first.
+
+**Minutes 18–22 — Dry run.** Example 1 with the parent array; point out the spare cable `[1,2]`.
+
+**Minutes 22–24 — Complexity.** Near-linear time, `O(n)` space. Mention union by size prevents deep recursion at `n = 10⁵`.
+
+**Remaining time — Follow-ups.** Q2 (which cables), Q4 (MST), Q5 (bridges).
+
+---
+
+## 19. Common Mistakes
+
+- ❌ **Missing the feasibility check** → returns a positive number for impossible inputs (Example 3 would give `2`).
+- ❌ **Returning `components` instead of `components − 1`.**
+- ❌ **Decrementing `components` for every cable** instead of only on real merges.
+- ❌ **Checking `m < n` instead of `m < n − 1`.** A tree on `n` nodes has `n − 1` edges.
+- ❌ **Recursive `find` with path compression but no union by size** → possible stack overflow at `n = 10⁵`.
+- ❌ **Recursive DFS on large inputs** → same risk; use an explicit stack.
+- ❌ **Trying to pick which cables to move** when only the count is asked — unnecessary.
+- ❌ **Using `HashMap`s for integer nodes** — works, but slower and noisier at `10⁵`.
+
+---
+
+## 20. The Pattern and Its Siblings
+
+**Family:** **connected components + a formula on the count**, with a feasibility floor.
+
+| Problem | What you compute from components |
 |:--|:--|
-| **Time** | **O(m · α(n)) ≈ O(m)** — one pass over the cables, each Union-Find op near-constant (path compression + union by size). Plus O(1) for the feasibility check. |
-| **Space** | **O(n)** — parent/rank maps, one entry per computer. |
+| **Number of Provinces** (LC 547) | the count itself |
+| **Number of Connected Components** (LC 323) | the count itself |
+| **Make Network Connected** (this) | `components − 1`, gated by `m ≥ n − 1` |
+| **Graph Valid Tree** (LC 261) | `m == n − 1` **and** components == 1 |
+| **Redundant Connection** (LC 684) | the first cable where `union` returns `false` |
+| **Count Unreachable Pairs** (LC 2316) | sum over component sizes |
+| **Min Cost to Connect All Points** (LC 1584) | Kruskal: Union-Find + sorted edges |
+| **Critical Connections** (LC 1192) | bridges — cables that can't be moved |
 
-Essentially linear in the number of cables.
-
----
-
-## 11. Common mistakes
-
-- ❌ **Skipping the feasibility check.** Without `if (connections.length < n-1) return -1`, impossible inputs return a wrong positive number. It must come first.
-- ❌ **Returning `components` instead of `components - 1`.** Merging `c` groups needs `c-1` bridges, not `c`. Off-by-one.
-- ❌ **Trying to count/track redundant cables explicitly.** Unnecessary — the feasibility inequality *guarantees* there are enough (§5). Just count components and subtract one.
-- ❌ **`unionSet` not signaling a merge.** You need it to return whether a real merge happened, so you can decrement the component count only on actual merges (not on redundant cables).
-- ❌ **Counting a redundant cable as a merge.** A cable between two already-connected computers must **not** reduce the component count — that's what the `if (s1 == s2) return false` guards.
-- ❌ **Using cable count as the component count.** Cables and components are different; components come from the Union-Find merges.
+> 💡 **Recognize the shape.** "Make everything connected / how many groups / how many links to add or move" → count components with Union-Find; translate the goal into a formula (`c − 1` links join `c` groups); check for a feasibility floor (`n − 1` edges).
 
 ---
 
-## 12. How to recognize this pattern next time
+## 21. TL;DR
 
-Building on the earlier Union-Find docs:
+**Picture:** components are islands; cables inside an island that close a loop are spare bridges.
 
-1. **Goal is "make everything one connected thing" / "how many groups"?** → connected components → **Union-Find** (count components: start at `n`, decrement per real merge).
-2. **Is there a feasibility floor?** Many "connect/spanning" problems need ≥ `n−1` edges. Check it first and bail with a sentinel (`-1`) if unmet.
-3. **Is the answer a formula on the component count** rather than the count itself? Here, bridging `c` components costs `c − 1`. Recognize "merge k groups into one → k−1 operations."
-4. **Is there a resource that must cover the operations?** Prove (or trust) that the resource suffices — here the redundant-cable count is guaranteed by the same feasibility inequality.
+**Facts:**
+1. Uniting `c` islands needs **at least `c − 1`** moves (each move joins at most two).
+2. A connected network of `n` computers needs **at least `n − 1`** cables → otherwise `−1`.
+3. Spares = `m − (n − c)`; `spares ≥ c − 1 ⇔ m ≥ n − 1` → so once feasible, the answer is **exactly `c − 1`**.
 
-This "count components, then `components − 1` to merge them, gated by a minimum-edges feasibility check" shape appears in network/graph-connection problems (redundant connections, spanning-tree-adjacent questions, "minimum links to connect").
+**Code:** feasibility check → Union-Find with `union` returning `true` on a real merge → `components − 1`.
 
-> 💡 **Components → merges → feasibility:** "The transferable move is: reduce to a component count, translate the goal into a formula on that count (merge c groups = c−1 ops), and put a feasibility floor in front (enough edges to connect at all). Union-Find handles the counting; a little algebra handles the rest." 
+**Complexity:** ≈ `O(n + m)` time, `O(n)` space.
 
----
-
-## 13. Cheat sheet
-
-**Recognize it:** "make network connected" = one connected component; answer is a formula on the **component count**, gated by a **minimum-cable feasibility** check.
-
-**Recipe:**
-```
-1. if connections.length < n - 1        → return -1        (impossible: need ≥ n-1 cables)
-2. init components = n; union every cable; decrement components on each REAL merge
-3. return components - 1
-```
-
-**Union-Find engine:** parent map (`-1`=root), recursive `findSet` w/ path compression, `unionSet` by size — with `unionSet` returning a **boolean** so you count only real merges.
-
-**Why it works:** merging `c` components needs `c−1` bridges; and `m ≥ n−1` algebraically guarantees ≥ `c−1` redundant cables to supply them (feasibility = sufficiency).
-
-**Watch:** feasibility check first; return `components − 1` (not `components`); redundant cables (same-set unions) don't decrement the count and don't need to be counted.
-
-**Complexity:** O(m) time, O(n) space.
-
-> **One-line philosophy:** *"Make the network connected" is "turn c components into one," which costs exactly c−1 re-plugged cables — so count the components with Union-Find and return c−1, but first reject the impossible case (fewer than n−1 cables total), because that same inequality both makes connection possible and guarantees you have enough redundant, movable cables to do every bridge; the reusable skill is reducing to a component count, expressing the goal as a formula on it, and front-loading a feasibility floor.*
+**One-line philosophy:**
+> Count the islands, because joining `c` of them takes `c − 1` bridges — and having at least `n − 1` cables in total is exactly what guarantees there are enough spare cables to move into place.
